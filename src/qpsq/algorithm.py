@@ -34,7 +34,7 @@ from .designs import (
     StabilizerProductState,
     random_stabilizer_product_state,
 )
-from .observables import enumerate_low_weight_paulis, pauli_l1_norm
+from .observables import pauli_l1_norm
 from .oracle import QPStat
 
 
@@ -142,16 +142,35 @@ def learn(
             label = "".join(reversed(label_chars))
             x_hat[label] = x_hat.get(label, 0.0) + (factor * sample.y) * inv_n
 
+    coefficients = _threshold_filter(x_hat, k, eps_tilde, observable_pauli_l1)
+    return LearnedModel(n_qubits=n_qubits, k=k, coefficients=coefficients)
+
+
+def _threshold_filter(
+    x_hat: dict[str, float],
+    k: int,
+    eps_tilde: float,
+    observable_pauli_l1: float,
+) -> dict[str, float]:
+    """Apply Algorithm 1's two-part filter to a sparse `x_hat` dict.
+
+    Iterates only over keys of `x_hat`; Paulis not present are
+    treated as `x_hat_P = 0` and end up implicitly zero in the model.
+    This avoids the `4^n` enumeration that becomes catastrophic at large
+    `n` (we hit it at `n = 12` and above; at `n = 14` it would be 268M
+    string objects in memory).
+    """
     coefficients: dict[str, float] = {}
-    for label in enumerate_low_weight_paulis(n_qubits, k):
+    for label, xv in x_hat.items():
         deg = sum(1 for c in label if c != "I")
-        xv = x_hat.get(label, 0.0)
+        if deg > k:
+            continue
         if (1.0 / 3.0) ** deg <= 2.0 * eps_tilde:
-            coefficients[label] = 0.0
             continue
         threshold = 2.0 * (3.0 ** (deg / 2.0)) * math.sqrt(eps_tilde) * observable_pauli_l1
-        coefficients[label] = (3.0**deg) * xv if abs(xv) > threshold else 0.0
-    return LearnedModel(n_qubits=n_qubits, k=k, coefficients=coefficients)
+        if abs(xv) > threshold:
+            coefficients[label] = (3.0**deg) * xv
+    return coefficients
 
 
 # ----- end-to-end convenience wrapper ---------------------------------------
@@ -263,13 +282,79 @@ def online_learn(
             label = "".join(reversed(label_chars))
             x_hat[label] = x_hat.get(label, 0.0) + factor * contribution_factor
 
-    coefficients: dict[str, float] = {}
-    for label in enumerate_low_weight_paulis(n_qubits, k):
-        deg = sum(1 for c in label if c != "I")
-        xv = x_hat.get(label, 0.0)
-        if (1.0 / 3.0) ** deg <= 2.0 * eps_tilde:
-            coefficients[label] = 0.0
-            continue
-        threshold = 2.0 * (3.0 ** (deg / 2.0)) * math.sqrt(eps_tilde) * observable_pauli_l1
-        coefficients[label] = (3.0**deg) * xv if abs(xv) > threshold else 0.0
+    coefficients = _threshold_filter(x_hat, k, eps_tilde, observable_pauli_l1)
+    return LearnedModel(n_qubits=n_qubits, k=k, coefficients=coefficients)
+
+
+# ----- streaming / chunked gather + learn (memory-bounded) -----------------
+
+
+def gather_and_learn_streaming(
+    *,
+    oracle: QPStat,
+    n_qubits: int,
+    observable: SparsePauliOp,
+    tau: float,
+    n_total: int,
+    k: int,
+    eps_tilde: float,
+    rng: np.random.Generator,
+    chunk_size: int = 500,
+    prune_threshold: float | None = None,
+    progress: Callable[[int, int], None] | None = None,
+) -> LearnedModel:
+    """Gather and learn in chunks, accumulating `x_hat` online.
+
+    This function never materializes the full sample list. After each
+    chunk it (optionally) prunes `x_hat` entries with magnitude below
+    `prune_threshold`. This bounds peak memory --- crucial at `n >= 12`
+    where a naive list of `N x 2^n` accumulations can balloon into tens
+    of GBs.
+
+    Mathematical output matches `gather` + `learn` whenever the prune
+    threshold leaves every threshold-passing entry intact.
+    """
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be positive")
+    if n_total <= 0:
+        raise ValueError("n_total must be positive")
+
+    obs_l1 = pauli_l1_norm(observable)
+    inv_n = 1.0 / n_total
+    if prune_threshold is None:
+        # Default: half the smallest possible magnitude threshold.
+        prune_threshold = math.sqrt(eps_tilde) * obs_l1 * 0.5
+
+    x_hat: dict[str, float] = {}
+    processed = 0
+    while processed < n_total:
+        n_chunk = min(chunk_size, n_total - processed)
+        for _ in range(n_chunk):
+            state = random_stabilizer_product_state(n_qubits, rng)
+            y = oracle.query(state.to_statevector(), observable, tau)
+            axes = state.axes
+            signs = state.signs
+            for subset in range(1 << n_qubits):
+                deg = subset.bit_count()
+                if deg > k:
+                    continue
+                label_chars = ["I"] * n_qubits
+                factor = 1
+                for q in range(n_qubits):
+                    if (subset >> q) & 1:
+                        label_chars[q] = axes[q]
+                        factor *= signs[q]
+                label = "".join(reversed(label_chars))
+                x_hat[label] = x_hat.get(label, 0.0) + (factor * y) * inv_n
+        processed += n_chunk
+
+        # Periodic pruning to keep the dict from growing unbounded. The
+        # 1M trigger is heuristic; raise it on roomy machines.
+        if prune_threshold > 0 and len(x_hat) > 1_000_000:
+            x_hat = {label: v for label, v in x_hat.items() if abs(v) > prune_threshold}
+
+        if progress is not None:
+            progress(processed, n_total)
+
+    coefficients = _threshold_filter(x_hat, k, eps_tilde, obs_l1)
     return LearnedModel(n_qubits=n_qubits, k=k, coefficients=coefficients)

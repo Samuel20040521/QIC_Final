@@ -14,6 +14,8 @@ dependencies = [
     "tqdm>=4.66",
     "qiskit>=1.0",
     "qiskit-aer>=0.14",
+    "joblib>=1.5.3",
+    "psutil>=7.2.2",
 ]
 
 [dependency-groups]

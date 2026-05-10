@@ -205,6 +205,33 @@ def test_circuit_noise_process_no_noise_matches_unitary() -> None:
     assert abs(a - b) < 1e-8
 
 
+def test_circuit_noise_process_mps_matches_density_matrix() -> None:
+    """For a moderately entangling unitary, MPS and density-matrix backends
+    agree on observable expectation values within MPS truncation tolerance."""
+    from qiskit.quantum_info import Operator, SparsePauliOp, Statevector
+
+    n = 4
+    qc = QuantumCircuit(n)
+    qc.h(0); qc.cx(0, 1); qc.cx(1, 2); qc.cx(2, 3); qc.rz(0.7, 0); qc.ry(0.3, 2)
+    proc_dm = CircuitNoiseProcess(circuit=qc, noise_model=None, method="density_matrix")
+    proc_mps = CircuitNoiseProcess(circuit=qc, noise_model=None, method="matrix_product_state")
+    proc_auto_small = CircuitNoiseProcess(circuit=qc, noise_model=None, method="auto")
+    assert proc_auto_small._resolved_method == "density_matrix"
+    psi = Statevector.from_label("0" * n)
+    obs = SparsePauliOp.from_list([("ZZZZ", 1.0), ("IIIX", 0.5)])
+    a = proc_dm.expectation(psi, obs)
+    b = proc_mps.expectation(psi, obs)
+    assert abs(a - b) < 1e-6, (a, b)
+
+
+def test_circuit_noise_process_auto_method_for_large_n() -> None:
+    """`method="auto"` picks MPS for n > 10."""
+    qc = QuantumCircuit(11)
+    qc.h(0)
+    proc = CircuitNoiseProcess(circuit=qc, noise_model=None, method="auto")
+    assert proc._resolved_method == "matrix_product_state"
+
+
 def test_circuit_noise_process_with_default_noise_changes_output() -> None:
     """H + CX prepares a Bell state from |00>; tr(ZZ |Bell><Bell|) = 1.
     A noisy version should give strictly less."""

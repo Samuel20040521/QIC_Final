@@ -245,35 +245,57 @@ def linear_depolarizing_drift(
 
 @dataclass
 class CircuitNoiseProcess(QuantumProcess):
-    """Run a `QuantumCircuit` through Qiskit Aer's density-matrix simulator
-    with an attached `NoiseModel`. This is the most hardware-realistic
-    process emulator we expose: 1Q/2Q gate errors, readout errors, and any
-    other Aer-supported noise propagate end-to-end.
+    """Run a `QuantumCircuit` through Qiskit Aer with an attached `NoiseModel`.
+
+    This is the most hardware-realistic process emulator we expose: 1Q/2Q
+    gate errors, readout errors, and any other Aer-supported noise
+    propagate end-to-end.
 
     The circuit must be fully bound (no free parameters). The number of
     qubits is taken from the circuit; input states must match.
+
+    Backend-method selection:
+      * `"density_matrix"` (default) is exact and uses `O(4^n)` memory
+        per call. Fine for `n <= 10`; at `n = 12` a single density matrix
+        is 256 MB and at `n = 14` it is 4 GB.
+      * `"matrix_product_state"` (MPS) bounds memory by the bond
+        dimension; pass for `n > 10` if your circuits are not too
+        entangling. Output expectation values via `save_expectation_value`
+        rather than a saved density matrix.
+      * `"auto"`: density_matrix for `n <= 10`, MPS for `n > 10`.
 
     Reuses one `AerSimulator` instance per process to amortize setup cost.
     """
 
     circuit: QuantumCircuit
     noise_model: object = None  # qiskit_aer.noise.NoiseModel; optional
+    method: str = "density_matrix"  # "density_matrix" | "matrix_product_state" | "auto"
+    mps_max_bond_dimension: int | None = None
     _sim: object = field(init=False, default=None, repr=False)
+    _resolved_method: str = field(init=False, default="density_matrix", repr=False)
 
     def __post_init__(self) -> None:
-        # Lazy-import to avoid a hard dep at module-import time.
-        from qiskit_aer import AerSimulator
+        from qiskit_aer import AerSimulator  # lazy import
 
-        kwargs = {"method": "density_matrix"}
-        if self.noise_model is not None:
-            kwargs["noise_model"] = self.noise_model
-        self._sim = AerSimulator(**kwargs)
         if self.circuit.num_parameters != 0:
             raise ValueError(
                 f"circuit must be bound (got {self.circuit.num_parameters} free params)"
             )
 
-    def _run(self, init_dm: DensityMatrix) -> DensityMatrix:
+        n = self.circuit.num_qubits
+        if self.method == "auto":
+            self._resolved_method = "matrix_product_state" if n > 10 else "density_matrix"
+        else:
+            self._resolved_method = self.method
+
+        kwargs: dict = {"method": self._resolved_method}
+        if self.noise_model is not None:
+            kwargs["noise_model"] = self.noise_model
+        if self._resolved_method == "matrix_product_state" and self.mps_max_bond_dimension is not None:
+            kwargs["matrix_product_state_max_bond_dimension"] = int(self.mps_max_bond_dimension)
+        self._sim = AerSimulator(**kwargs)
+
+    def _expectation_via_density(self, init_dm: DensityMatrix, observable: SparsePauliOp) -> float:
         n = self.circuit.num_qubits
         if init_dm.num_qubits != n:
             raise ValueError(
@@ -284,14 +306,46 @@ class CircuitNoiseProcess(QuantumProcess):
         qc.compose(self.circuit, inplace=True)
         qc.save_density_matrix()
         result = self._sim.run(qc).result()
-        return result.data(0).get("density_matrix")
-
-    def expectation(self, state: Statevector, observable: SparsePauliOp) -> float:
-        rho = self._run(DensityMatrix(state))
+        rho = result.data(0).get("density_matrix")
         return float(np.real(rho.expectation_value(observable)))
 
+    def _expectation_via_mps(self, state: Statevector, observable: SparsePauliOp) -> float:
+        # MPS doesn't support `set_density_matrix`. We require a pure-state
+        # input and use `set_statevector`.
+        n = self.circuit.num_qubits
+        if state.num_qubits != n:
+            raise ValueError(
+                f"input statevector has {state.num_qubits} qubits, circuit has {n}"
+            )
+        qc = QuantumCircuit(n)
+        qc.set_statevector(state.data)
+        qc.compose(self.circuit, inplace=True)
+        qc.save_expectation_value(observable, qubits=list(range(n)))
+        result = self._sim.run(qc).result()
+        return float(np.real(result.data(0).get("expectation_value")))
+
+    def expectation(self, state: Statevector, observable: SparsePauliOp) -> float:
+        if self._resolved_method == "matrix_product_state":
+            return self._expectation_via_mps(state, observable)
+        return self._expectation_via_density(DensityMatrix(state), observable)
+
     def evolve_density(self, rho: DensityMatrix) -> DensityMatrix:
-        return self._run(rho)
+        if self._resolved_method == "matrix_product_state":
+            raise NotImplementedError(
+                "evolve_density is not exposed for the MPS method; use "
+                "expectation(state, observable) instead."
+            )
+        n = self.circuit.num_qubits
+        if rho.num_qubits != n:
+            raise ValueError(
+                f"input density matrix has {rho.num_qubits} qubits, circuit has {n}"
+            )
+        qc = QuantumCircuit(n)
+        qc.set_density_matrix(rho)
+        qc.compose(self.circuit, inplace=True)
+        qc.save_density_matrix()
+        result = self._sim.run(qc).result()
+        return result.data(0).get("density_matrix")
 
 
 def default_hardware_noise_model(
