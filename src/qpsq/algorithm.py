@@ -199,3 +199,77 @@ def run_algorithm1(
 
 def predict_callable(model: LearnedModel) -> Callable[[Statevector], float]:
     return lambda state: model.predict(state)
+
+
+# ----- online (drift-aware) learning ----------------------------------------
+
+
+def online_learn(
+    samples: list[GatheredSample],
+    n_qubits: int,
+    k: int,
+    eps_tilde: float,
+    observable_pauli_l1: float,
+    half_life: float | None = None,
+) -> LearnedModel:
+    """Drift-aware variant of `learn`.
+
+    Each sample at index `l` (0-based, oldest first) gets weight
+    `gamma^(N - 1 - l)` with `gamma = 2^(-1 / half_life)`, so the most
+    recent sample has weight 1 and the oldest has weight `gamma^(N-1)`.
+    Setting `half_life=None` (or `+inf`) recovers uniform weighting,
+    i.e. exactly the behavior of `learn`.
+
+    The same threshold rule as the original Algorithm 1 is applied at
+    the end, with `x_hat` interpreted as the weighted average.
+    """
+    n_samples = len(samples)
+    if n_samples == 0:
+        raise ValueError("Need at least one gathered sample")
+
+    if half_life is None or not np.isfinite(half_life) or half_life <= 0:
+        gamma = 1.0
+    else:
+        gamma = float(2.0 ** (-1.0 / half_life))
+
+    # Precompute weights with the most recent sample weight = 1.
+    if gamma == 1.0:
+        weights = np.ones(n_samples, dtype=float)
+    else:
+        weights = np.array(
+            [gamma ** (n_samples - 1 - l) for l in range(n_samples)], dtype=float
+        )
+    w_sum = float(weights.sum())
+    if w_sum <= 0:
+        raise ValueError("weights sum to zero")
+
+    x_hat: dict[str, float] = {}
+    for sample, w in zip(samples, weights, strict=True):
+        if w == 0:
+            continue
+        axes = sample.state.axes
+        signs = sample.state.signs
+        contribution_factor = (w * sample.y) / w_sum
+        for subset in range(1 << n_qubits):
+            deg = subset.bit_count()
+            if deg > k:
+                continue
+            label_chars = ["I"] * n_qubits
+            factor = 1
+            for q in range(n_qubits):
+                if (subset >> q) & 1:
+                    label_chars[q] = axes[q]
+                    factor *= signs[q]
+            label = "".join(reversed(label_chars))
+            x_hat[label] = x_hat.get(label, 0.0) + factor * contribution_factor
+
+    coefficients: dict[str, float] = {}
+    for label in enumerate_low_weight_paulis(n_qubits, k):
+        deg = sum(1 for c in label if c != "I")
+        xv = x_hat.get(label, 0.0)
+        if (1.0 / 3.0) ** deg <= 2.0 * eps_tilde:
+            coefficients[label] = 0.0
+            continue
+        threshold = 2.0 * (3.0 ** (deg / 2.0)) * math.sqrt(eps_tilde) * observable_pauli_l1
+        coefficients[label] = (3.0**deg) * xv if abs(xv) > threshold else 0.0
+    return LearnedModel(n_qubits=n_qubits, k=k, coefficients=coefficients)

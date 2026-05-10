@@ -102,6 +102,56 @@ def random_clifford_unitary(n: int, rng: np.random.Generator) -> Operator:
     return Operator(random_clifford(n, seed=seed))
 
 
+def clifford_plus_t_circuit(
+    n: int,
+    depth: int,
+    t_count: int,
+    rng: np.random.Generator,
+) -> Operator:
+    """A Clifford+T circuit with `depth` random Cliffords interleaved with
+    `t_count` T-gates distributed at random slots.
+
+    The circuit has the schematic form
+
+        C_0  T...  C_1  T...  C_2  ...  C_{depth-1}  T...
+
+    where T-gates are inserted at uniformly chosen "slots" (`depth + 1`
+    positions: before each Clifford and after the last). The T-gate's
+    qubit is sampled uniformly per gate. With `t_count = 0` the circuit
+    is a pure Clifford (a unitary 3-design when `depth >= 1`). As
+    `t_count` grows, magic accumulates and the operator distribution
+    departs from any unitary 2-design.
+
+    Reproducible: all randomness flows through `rng`.
+    """
+    if depth < 0 or t_count < 0:
+        raise ValueError("depth and t_count must be non-negative")
+    qc = QuantumCircuit(n)
+    if depth == 0 and t_count == 0:
+        return Operator(qc)
+
+    # Sample T-gate placements once.
+    if t_count > 0:
+        t_slots = rng.integers(0, depth + 1, size=t_count)
+        t_qubits = rng.integers(0, n, size=t_count)
+    else:
+        t_slots = np.array([], dtype=int)
+        t_qubits = np.array([], dtype=int)
+    slot_t_indices: list[list[int]] = [[] for _ in range(depth + 1)]
+    for i, s in enumerate(t_slots):
+        slot_t_indices[int(s)].append(i)
+
+    for slot in range(depth + 1):
+        for i in slot_t_indices[slot]:
+            qc.t(int(t_qubits[i]))
+        if slot < depth:
+            seed = int(rng.integers(0, 2**32 - 1))
+            cliff = random_clifford(n, seed=seed)
+            qc.compose(cliff.to_circuit(), inplace=True)
+
+    return Operator(qc)
+
+
 def brickwall_random_circuit(n: int, depth: int, rng: np.random.Generator) -> Operator:
     """A brick-wall random circuit: alternating layers of Haar-random 2-qubit gates.
 
