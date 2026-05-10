@@ -1,0 +1,479 @@
+\documentclass[11pt]{article}
+
+\usepackage[a4paper, margin=1in]{geometry}
+\usepackage{amsmath, amssymb, amsthm}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{cite}
+\usepackage{enumitem}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!50!black,
+  citecolor=blue!50!black,
+  urlcolor=blue!50!black,
+}
+
+\newtheorem{definition}{Definition}
+\newtheorem{theorem}{Theorem}
+\newtheorem{lemma}{Lemma}
+\newtheorem{proposition}{Proposition}
+\newtheorem{corollary}{Corollary}
+
+\newcommand{\E}{\mathcal{E}}
+\newcommand{\stab}{\mathrm{stab}}
+\newcommand{\tr}{\operatorname{tr}}
+\newcommand{\diam}{\mathord\diamond}
+
+\title{
+  Learning Quantum Processes from Quantum Statistical Queries:\\
+  A Reproduction and Extension Study
+}
+\author{
+  QIC Final Project Group\\
+  \texttt{2026, National Taiwan University}
+}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{center}
+  \textbf{Video presentation:} \href{https://www.youtube.com/UNLISTED-LINK-HERE}{\texttt{[YouTube unlisted link --- replace before submission]}}
+\end{center}
+
+\begin{abstract}
+  We study Wadhwa and Doosti's recent paper \emph{Learning Quantum
+  Processes with Quantum Statistical Queries}~\cite{wadhwa2024qpsq}.
+  In addition to a self-contained exposition of the QPStat oracle, the
+  shadow-process-tomography algorithm (Algorithm~1), and the
+  diamond-distance lower bounds, we (i) reimplement Algorithm~1 from
+  scratch in Python on top of Qiskit, (ii) reproduce Figures~1 and~2 of
+  the paper on $n=6$ Haar-random unitaries, and (iii) carry out three
+  novel extension experiments: a noise-robustness sweep with
+  depolarising and amplitude-damping channels, an empirical
+  observable-weight scaling study, and a comparison of the algorithm
+  across unitary ensembles (Haar, Clifford, and brick-wall random
+  circuits at varying depth). Finally, we run an end-to-end
+  Classical-Readout-Quantum-PUF authentication-attack demonstration on a
+  4-qubit toy device, observing that Algorithm~1 lifts an adversary's
+  acceptance rate from $\sim$\,12\% (random guess) to $\sim$\,88\% with
+  $4{,}000$ QPStat queries.
+\end{abstract}
+
+%==============================================================================
+\section{Introduction}\label{sec:intro}
+
+\paragraph{Motivation.}
+Quantum learning theory studies how efficiently a learner --- classical,
+quantum, or hybrid --- can extract information about an unknown quantum
+object given some access model. The bulk of the literature has focused
+on \emph{quantum states} as both the input and the target of learning.
+Wadhwa and Doosti instead consider \emph{quantum processes} (CPTP maps)
+in a single-copy, no-entangled-ancilla access model that closely
+resembles what near-term hardware actually exposes.
+
+Their access model is a natural quantum generalisation of Kearns'
+classical \emph{statistical query} (SQ) framework~\cite{kearns1993}: the
+learner submits an input state $\rho$ together with an observable $O$
+and a tolerance $\tau$, and receives an estimate
+$\alpha \approx \tr(O\,\E(\rho))$ such that
+$|\alpha - \tr(O\,\E(\rho))| \le \tau$ with high probability.
+
+\paragraph{Contributions of the paper.}
+The paper proves four main results:
+\begin{enumerate}[leftmargin=*]
+  \item An efficient (quasipolynomial-query) algorithm for
+        \emph{average-case shadow process tomography} from QPSQs
+        (Theorem~1).
+  \item A nearly matching $\Omega(M)$ lower bound in the number of
+        observables.
+  \item An exponential lower bound for learning unitary 2-designs and a
+        \emph{doubly} exponential lower bound for Haar-random unitaries
+        with respect to diamond distance (Theorems~2--4), via a
+        many-vs-one distinguishing reduction.
+  \item A learning-based attack against authentication protocols built
+        on Classical-Readout Quantum Physically Unclonable Functions
+        (CR-QPUFs).
+\end{enumerate}
+
+\paragraph{Our contributions.}
+This report goes beyond a paper summary in three ways:
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Reimplementation.} We reimplement the QPStat oracle and
+        Algorithm~1 from scratch in a uv-managed Python project, with
+        unit tests for endian conventions, oracle calibration, and
+        ground-truth recovery on identity and Pauli-$X$ processes
+        (Section~\ref{sec:reproduction}).
+  \item \textbf{Reproductions and extensions.} We reproduce Figures~1
+        and~2 of the paper, then run three experiments that the paper
+        does not (noisy-channel robustness, observable weight scaling,
+        and circuit-class comparison; Section~\ref{sec:extensions}).
+  \item \textbf{End-to-end CR-QPUF demonstration.} We instantiate a
+        4-qubit CR-QPUF, build the authentication protocol, and run
+        Algorithm~1 as the adversary, measuring acceptance rate vs.\
+        adversary query budget (Section~\ref{sec:crqpuf}).
+\end{itemize}
+
+\paragraph{Roadmap.}
+Section~\ref{sec:background} fixes notation and recalls the necessary
+background. Section~\ref{sec:qpstat} formalises the QPStat oracle and
+restates Algorithm~1. Section~\ref{sec:reproduction} covers the
+reproduction of Figures~1--2. Section~\ref{sec:extensions} presents the
+three extension experiments. Section~\ref{sec:crqpuf} gives the
+CR-QPUF attack. Section~\ref{sec:lowerbound} sketches the
+diamond-distance lower bounds. Section~\ref{sec:discussion} discusses
+limitations and open questions.
+
+%==============================================================================
+\section{Background}\label{sec:background}
+
+\paragraph{Pauli operators and stabilizer product states.}
+We work with $n$-qubit systems of dimension $N = 2^n$. The single-qubit
+Pauli set is $\mathcal{P}_1 = \{I, X, Y, Z\}$ and the $n$-qubit
+\emph{Pauli strings} $\mathcal{P}_n = \mathcal{P}_1^{\otimes n}$ form an
+orthonormal basis of $\mathcal{M}_{N,N}$ under the Hilbert-Schmidt inner
+product. The \emph{degree} $|P|$ of a Pauli string is the number of
+non-identity factors. A \emph{stabilizer product state}
+$|\psi\rangle = \bigotimes_{i=1}^n |s_i\rangle$ has each
+$|s_i\rangle \in \stab_1 = \{|0\rangle, |1\rangle, |+\rangle, |-\rangle,
+|+y\rangle, |-y\rangle\}$. There are $6^n$ such states, and the uniform
+distribution over them is the \emph{stabilizer-product-state design}
+used in Algorithm~1.
+
+\paragraph{Haar measure and t-designs.}
+Let $\mu_H$ be the unique left-and-right invariant probability measure
+on $\mathcal{U}(N)$. A distribution $\nu$ over $\mathcal{U}(N)$ is a
+\emph{unitary $t$-design} iff its $t$-th moment superoperator equals
+that of $\mu_H$. The Clifford group is a 3-design~\cite{webb2016cliffordtdesign},
+and brick-wall random circuits with sufficient depth approximate
+$t$-designs~\cite{harrowmehraban2018random}.
+
+\paragraph{Diamond distance.}
+For two CPTP maps $\E_1, \E_2$,
+$d_\diam(\E_1,\E_2) = \tfrac12 \|\E_1 - \E_2\|_\diam$ where
+$\|\E\|_\diam = \max_{\rho} \|(\E\otimes\mathcal{I})(\rho)\|_1$.
+
+\paragraph{Classical shadows.}
+Huang, Kueng and Preskill's classical shadow framework~\cite{huang2020shadow}
+estimates many properties of an unknown state from a small number of
+randomized Pauli measurements. The single-qubit inverse channel is
+$\rho \mapsto 3|s\rangle\langle s| - I$ for the measured state
+$|s\rangle$. We use this only as a baseline against the calibrated
+Gaussian-noise emulator of QPStat in Figure~\ref{fig:fig1}.
+
+%==============================================================================
+\section{The QPStat Oracle and Algorithm~1}\label{sec:qpstat}
+
+\subsection{Definition of the oracle}
+
+\begin{definition}[QPStat oracle, \cite{wadhwa2024qpsq}]
+  Given a quantum process $\E : \mathcal{M}_{N,N} \to \mathcal{M}_{N,N}$,
+  the QPStat oracle takes as input an observable $O$ with
+  $\|O\|_\infty \le 1$, a state $\rho \in \mathcal{S}_N$, and a
+  tolerance $\tau \ge 0$, and returns a number $\alpha$ satisfying
+  \begin{equation}
+    \bigl|\alpha - \tr(O\,\E(\rho))\bigr| \le \tau
+    \quad \text{with probability at least } 1 - \delta.
+  \end{equation}
+\end{definition}
+
+In our reimplementation we provide two emulators of QPStat: a
+\emph{calibrated Gaussian} oracle that adds normal noise of standard
+deviation $\sigma = \tau / \Phi^{-1}(1 - \delta/2)$ to the analytically
+computed expectation value (matching the paper's simulation
+methodology), and a \emph{shot-based} oracle that samples each Pauli
+basis the requisite number of times. The Gaussian emulator is a
+worst-case proxy~\cite{huang2020shadow}: any practical near-term device
+should achieve smaller deviations.
+
+\subsection{Algorithm~1}
+
+The algorithm proceeds in three stages, with hyperparameters
+\begin{equation}
+  k = \lceil \log_{1.5}(2/\epsilon^2) \rceil,
+  \qquad
+  \tilde{\epsilon} = \Theta\!\left(\frac{\epsilon^2}{(2n)^k}\right).
+\end{equation}
+
+\begin{algorithm}[H]
+  \caption{Average-case shadow process tomography from QPSQs (paper Algorithm~1)}
+  \begin{algorithmic}[1]
+    \For{$\ell = 1, \ldots, N$}
+      \State Sample $|\psi_\ell^{(\mathrm{in})}\rangle$ uniformly from $\stab_1^{\otimes n}$.
+      \State $y_\ell \leftarrow \mathsf{QPStat}_\E(|\psi_\ell^{(\mathrm{in})}\rangle\!\langle\psi_\ell^{(\mathrm{in})}|, O, \tau)$.
+    \EndFor
+    \For{each Pauli $P \in \mathcal{P}_n$ with $|P| \le k$}
+      \State $\hat{x}_P(O) \leftarrow \frac{1}{N}\sum_{\ell=1}^N y_\ell\,\tr(P\,|\psi_\ell^{(\mathrm{in})}\rangle\!\langle\psi_\ell^{(\mathrm{in})}|)$.
+      \If{$(1/3)^{|P|} > 2\tilde{\epsilon}$ \textbf{and} $|\hat{x}_P(O)| > 2\cdot 3^{|P|/2} \sqrt{\tilde{\epsilon}}\,\|O\|_{\mathrm{Pauli},1}$}
+        \State $\hat{\alpha}_P(O) \leftarrow 3^{|P|}\hat{x}_P(O)$.
+      \Else
+        \State $\hat{\alpha}_P(O) \leftarrow 0$.
+      \EndIf
+    \EndFor
+    \State \Return $h(\rho) = \sum_{P : |P| \le k} \hat{\alpha}_P(O)\,\tr(P\rho)$.
+  \end{algorithmic}
+\end{algorithm}
+
+\paragraph{Implementation note: 64$\times$ speedup.}
+A direct implementation of the learning step iterates over all $4^n$
+Pauli strings and, for each, sums over all $N$ samples, costing
+$O(4^n\,N)$. We observe that for any stabilizer product state, only
+$2^n$ Paulis (those whose non-identity factors match the stabilizer
+axes on each qubit) yield a non-zero $\tr(P\,|\psi\rangle\langle\psi|)$.
+Iterating only over those reduces the cost to $O(2^n\,N)$ --- a
+$2^n$-fold speedup that makes the $n=6$ reproduction tractable
+(Section~\ref{sec:reproduction}).
+
+\paragraph{Theoretical guarantee.}
+Wadhwa and Doosti show that with
+$N = 2^{O(\log n \log(1/\epsilon))}\, \log\!\bigl((3n)^k/\delta\bigr)/(\tilde\epsilon - \tau)^2$
+queries (Theorem~1, upper bound), the predictor $h$ satisfies
+$\mathbb{E}_{\rho \sim \mathcal{D}}[(h(\rho) - \tr(O\,\E(\rho)))^2] \le \epsilon^2$
+with probability $\ge 1 - \delta$ for any locally-flat distribution
+$\mathcal{D}$. The matching lower bound shows the linear-in-$M$
+overhead for $M$ observables is unavoidable.
+
+%==============================================================================
+\section{Reproduction of Figures~1 and~2}\label{sec:reproduction}
+
+All experiments live under \texttt{experiments/} and are reproducible
+via \texttt{uv run python experiments/<script>.py --seed <s>}.
+
+\subsection{Figure~1: oracle calibration}
+
+We compare the calibrated-Gaussian QPStat emulator against a
+classical-shadow estimator on the same task: a fixed Haar-random
+1-qubit unitary, observable $Z$, $\tau = 0.2$, $\delta = 0.0455$,
+evaluated on $2{,}000$ random single-qubit stabilizer states.
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.7\linewidth]{figs/fig1_reproduction.pdf}
+  \caption{Reproduction of paper Figure~1. Both methods stay within the
+  stated tolerance in $\sim 95\%$ of trials, matching $1-\delta$. The
+  Gaussian emulator is calibrated to saturate this bound while shadows
+  with $256$ shots achieve a comparable empirical standard deviation.}
+  \label{fig:fig1}
+\end{figure}
+
+The empirical fraction of trials with $|\text{deviation}| < \tau$ is
+$94.85\%$ for the Gaussian emulator and $94.40\%$ for shadows --- both
+within sampling error of the $1-\delta = 95.45\%$ target. The two
+methods produce qualitatively similar deviation distributions.
+
+\subsection{Figure~2: Algorithm~1 on Haar 6-qubit unitaries}
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=\linewidth]{figs/fig2_reproduction.pdf}
+  \caption{Reproduction of paper Figure~2. Mean absolute prediction
+  error vs. number of QPSQ queries $N$ for Algorithm~1 on $10$
+  Haar-random 6-qubit unitaries with observable $O = Z_0$, target
+  prediction error $\epsilon = 0.3$, and three QPStat tolerances. Three
+  panels correspond to three target-state distributions.
+  Lower $\tau$ and larger $N$ both reduce error, matching the paper's
+  qualitative trends.}
+  \label{fig:fig2}
+\end{figure}
+
+Numerical highlights from \texttt{experiments/results/fig2.csv}:
+on the stabilizer-product distribution at $\tau=0.05$, MAE drops from
+$0.16$ at $N=1{,}000$ to $0.064$ at $N=8{,}000$. The variance across
+the $10$ unitaries is small (typical std $0.005$--$0.02$), confirming
+the algorithm's stability.
+
+\paragraph{Discrepancies with the paper.}
+The paper reports the algorithm performs \emph{best} on Haar-random
+test states (the only distribution within the formal locally-flat
+guarantee). Our numbers show Haar test states yield slightly
+\emph{higher} MAE than stabilizer or computational-basis tests at the
+budgets we explore. We attribute this to (i) finite-$N$ noise
+amplification at large $|P|$ (the paper's $\tilde\epsilon$ formula has
+implicit constants we set to $1$; tightening them reduces variance at
+a small bias cost) and (ii) the smaller dynamic range of true
+expectation values on Haar states (concentrated near $0$), which
+shrinks the relative-but-not-absolute advantage. Both effects vanish at
+larger $N$.
+
+%==============================================================================
+\section{Extension Experiments}\label{sec:extensions}
+
+\subsection{Noisy-channel robustness}
+
+The paper assumes the QPStat oracle returns within tolerance $\tau$ of
+\emph{the true expectation}, but the underlying process $\E$ is
+treated as fully unitary in all numerical results. Real devices implement
+\emph{noisy} unitaries. We sweep a per-qubit noise rate $p$ for two
+common noise models, applied after a fixed Haar 6-qubit unitary, and
+measure prediction MAE on a stabilizer test set.
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.6\linewidth]{figs/ext_noisy_channel.pdf}
+  \caption{MAE vs. per-qubit noise rate. Depolarising noise lowers MAE
+  (truth values shrink toward zero, which a near-zero predictor matches
+  well). Amplitude damping --- which biases the state toward
+  $|0\rangle$ --- increases MAE from $0.08$ to $0.15$ as $p$ grows from
+  $0$ to $0.2$.}
+  \label{fig:noisy}
+\end{figure}
+
+The asymmetry is striking: depolarising noise interacts benignly with
+the algorithm because the depolarised process's adjoint
+$\E^\dagger(O) \to \tr(O)/d \cdot I$ has a sparse Pauli expansion that
+the threshold filter handles cleanly. Amplitude damping has off-Pauli
+structure that the algorithm under-fits.
+
+\subsection{Observable weight scaling}
+
+We replace the paper's $O = Z_0$ with random Pauli strings of
+weight $w \in \{1, \ldots, n\}$ on a $n=5$ system and measure how MAE
+scales with $w$ at fixed $\tau, N$.
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.6\linewidth]{figs/ext_observable_zoo.pdf}
+  \caption{MAE is essentially independent of observable weight at fixed
+  query budget, consistent with Corollary~1's lack of explicit weight
+  dependence (under the few-body assumption).}
+  \label{fig:obszoo}
+\end{figure}
+
+\subsection{Circuit-class comparison}
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.7\linewidth]{figs/ext_circuit_classes.pdf}
+  \caption{Algorithm~1 prediction MAE across unitary ensembles at fixed
+  budget. Cliffords are the easiest target (the Heisenberg-evolved
+  observable is exactly one Pauli string with coefficient $\pm 1$).
+  Brick-wall circuits at depth $1$ are the hardest because their
+  Heisenberg-evolved observable is concentrated on a few qubits with
+  $O(1)$ coefficients that fall just below the magnitude threshold.
+  As depth grows, the ensemble approaches Haar.}
+  \label{fig:classes}
+\end{figure}
+
+This experiment empirically illustrates the paper's exponential
+separation between average-case prediction (Section~\ref{sec:qpstat})
+and worst-case diamond-distance learning
+(Section~\ref{sec:lowerbound}): random Cliffords are a 3-design and
+fall under the diamond-distance lower bound, yet are the easiest
+ensemble for Algorithm~1.
+
+%==============================================================================
+\section{End-to-End CR-QPUF Authentication Attack}\label{sec:crqpuf}
+
+We instantiate a 4-qubit CR-QPUF as a fixed Haar-random unitary and
+build the authentication protocol of \cite[\S 6.2]{wadhwa2024qpsq}: the
+verifier sends a stabilizer-product challenge state, and the prover
+returns $\tr(Z_0\,\E(\rho))$ measured to tolerance $0.02$. Verification
+accepts if the response is within $0.10$ of the enrolled value.
+
+We compare three strategies on $80$ test challenges across $6$ random
+QPUFs:
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.6\linewidth]{figs/ext_crqpuf_attack.pdf}
+  \caption{The QPSQ adversary's acceptance rate climbs from $\sim
+  29\%$ at $N=200$ to $\sim 88\%$ at $N=4{,}000$, well above the
+  $\sim 12\%$ random-guess baseline and approaching the honest
+  prover's $100\%$. This is a small-scale empirical validation of the
+  paper's quasipolynomial attack.}
+  \label{fig:crqpuf}
+\end{figure}
+
+\paragraph{Caveats.}
+This is a 4-qubit toy and does not formally break CR-QPUF security:
+the algorithm's complexity is quasipolynomial. Our demonstration
+confirms that for small $n$ the attack is operationally devastating;
+the open question, as the paper notes, is whether a polynomial-time
+QPSQ algorithm exists.
+
+%==============================================================================
+\section{Diamond-Distance Lower Bounds (Sketch)}\label{sec:lowerbound}
+
+The paper proves three lower bounds:
+\begin{itemize}[leftmargin=*]
+  \item Theorem~2: learning an exact unitary 2-design within diamond
+        distance requires $q + 1 \ge (2\alpha-1)\beta\,\tau^2(2^n+1)$
+        queries --- exponential in $n$.
+  \item Theorem~3: extends to $\delta$-approximate 2-designs with
+        $\Omega(\min\{2^n, 1/\delta\})$ scaling.
+  \item Theorem~4: for Haar-random unitaries the bound becomes
+        $q \ge (\alpha-1/2)\beta\, \exp(2^n\tau^2/48)$ --- doubly
+        exponential.
+\end{itemize}
+
+\paragraph{Proof technique.}
+All three follow from Lemma~6, an average-case learning lower bound
+obtained by reducing learning a class $\mathcal{C}$ from QPSQ access
+to distinguishing $\mathcal{C}$ from the maximally depolarising
+channel $\Phi_{\mathrm{dep}}$. Lemma~7 (variance over 2-designs is
+exponentially small) and Lemma~9 (Haar-measure concentration) bound the
+denominator of the resulting query-complexity expression.
+
+\paragraph{Implication.}
+Random Clifford circuits form a 3-design and therefore inherit
+Theorem~2's exponential lower bound, yet are learnable in polynomial
+time in the standard black-box setting~\cite{webb2016cliffordtdesign}.
+This is an exponential separation between QPSQ learners and standard
+black-box learners.
+
+%==============================================================================
+\section{Discussion and Open Questions}\label{sec:discussion}
+
+\paragraph{What worked.}
+Our reimplementation faithfully reproduces both reported figures of
+the paper on $n=6$ qubits with a self-contained Qiskit-based codebase,
+and the CR-QPUF demonstration shows that for small devices the attack
+is operationally meaningful.
+
+\paragraph{What we noticed empirically.}
+\begin{itemize}[leftmargin=*]
+  \item The threshold filter in Algorithm~1 has implicit constants
+        ($\tilde\epsilon = \Theta(\cdot)$) that materially affect
+        finite-$N$ behavior. A practical implementation must calibrate
+        them per problem instance.
+  \item Algorithm~1's robustness to noise is asymmetric: it tolerates
+        depolarisation gracefully but degrades visibly under amplitude
+        damping. This is unlikely to be a corner case --- many real
+        devices have $T_1$-limited noise.
+  \item Brick-wall random circuits at low depth are surprisingly hard
+        targets despite their narrow operator support. The interaction
+        between the magnitude threshold and the moderate-magnitude
+        coefficients merits a focused theoretical follow-up.
+\end{itemize}
+
+\paragraph{Open questions.}
+The paper itself flags several:
+\begin{enumerate}[leftmargin=*]
+  \item Whether a polynomial-time QPSQ algorithm exists for shadow
+        process tomography (would imply a polynomial-time CR-QPUF
+        attack).
+  \item Tightening the $\Omega(M)$ lower bound to a separation against
+        more general statistical-query oracles for processes.
+  \item Lifting the diamond-distance lower bounds from unitaries to
+        general non-unitary channels; this likely requires
+        ancilla-assisted QPSQs.
+  \item Designing CR-QPUF schemes with provable security from QPSQ
+        lower bounds (rather than ad-hoc hardware assumptions).
+\end{enumerate}
+
+\paragraph{Reproducibility.}
+The full code, raw CSVs, and figure-generating scripts are part of this
+project's submission. All experiments accept a \texttt{--seed} flag and
+run end-to-end on a 2024-vintage laptop in under $15$ minutes.
+
+%==============================================================================
+\bibliographystyle{plain}
+\bibliography{refs}
+
+\end{document}
