@@ -204,6 +204,87 @@ class DriftingProcess(QuantumProcess):
         return out
 
 
+class CoherentDriftProcess(QuantumProcess):
+    """Coherent (unitary) drift: at query index `t`, apply
+    `U_t = exp(-i * eta * t * H_drift) @ U_0`.
+
+    `H_drift` is a fixed Hermitian operator (use
+    `random_pauli_drift_hamiltonian` to generate one). We diagonalise
+    `H_drift = V diag(d) V^dag` once at construction so each query is
+    one O(d^3) matrix product instead of an `expm` Pade approximation.
+
+    This is the "coherent drift" model: the unitary slowly rotates while
+    still being unitary, in contrast to `linear_depolarizing_drift` where
+    a per-qubit Kraus rate increases monotonically.
+    """
+
+    def __init__(
+        self,
+        base_unitary: Operator,
+        drift_hamiltonian: np.ndarray,
+        drift_rate: float,
+        start_t: int = 0,
+    ) -> None:
+        U0 = np.asarray(base_unitary.data, dtype=complex)
+        H = np.asarray(drift_hamiltonian, dtype=complex)
+        if U0.shape[0] != H.shape[0] or H.shape[0] != H.shape[1]:
+            raise ValueError("base_unitary and drift_hamiltonian must share dimension")
+        self._U0 = U0
+        self._H = H
+        self._eta = float(drift_rate)
+        self._t = int(start_t)
+        eigvals, eigvecs = np.linalg.eigh(H)
+        self._eigvals = eigvals
+        self._eigvecs = eigvecs
+
+    @property
+    def t(self) -> int:
+        return self._t
+
+    def reset(self, t: int = 0) -> None:
+        self._t = int(t)
+
+    def _U_at(self, t: int) -> np.ndarray:
+        phase = np.exp(-1j * self._eta * t * self._eigvals)
+        return (self._eigvecs * phase) @ self._eigvecs.conj().T @ self._U0
+
+    def expectation(self, state: Statevector, observable: SparsePauliOp) -> float:
+        U_t = self._U_at(self._t)
+        new_state = Statevector(U_t @ state.data)
+        self._t += 1
+        return float(np.real(new_state.expectation_value(observable)))
+
+    def evolve_density(self, rho: DensityMatrix) -> DensityMatrix:
+        U_t = self._U_at(self._t)
+        out = rho.evolve(Operator(U_t))
+        self._t += 1
+        return out
+
+
+def random_pauli_drift_hamiltonian(
+    n_qubits: int,
+    n_terms: int,
+    rng: np.random.Generator,
+    spectral_norm: float = 1.0,
+) -> np.ndarray:
+    """A random Hermitian operator built as a sum of `n_terms` random Pauli
+    strings with iid Gaussian coefficients, normalised to a chosen spectral
+    norm. Useful as `H_drift` in `CoherentDriftProcess`.
+    """
+    alphabet = np.array(list("IXYZ"))
+    items: list[tuple[str, float]] = []
+    for _ in range(n_terms):
+        label = "".join(alphabet[rng.integers(0, 4, size=n_qubits)])
+        coeff = float(rng.standard_normal())
+        items.append((label, coeff))
+    H = SparsePauliOp.from_list(items).to_matrix()
+    H = (H + H.conj().T) / 2  # numerical hermiticity
+    s = float(np.linalg.norm(H, ord=2))
+    if s > 0:
+        H = H * (spectral_norm / s)
+    return H
+
+
 def linear_depolarizing_drift(
     base_unitary: Operator,
     p_start: float,

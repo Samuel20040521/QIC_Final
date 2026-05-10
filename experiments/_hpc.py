@@ -71,6 +71,34 @@ def default_max_workers(reserve_ratio: float = 0.5) -> int:
     return max(1, int(cpu * reserve_ratio))
 
 
+def wait_for_memory_under_cap(
+    cap_bytes: int,
+    poll_seconds: float = 60.0,
+    max_wait_seconds: float = 1800.0,
+    on_wait: Callable[[int, float], None] | None = None,
+) -> None:
+    """Block while *system-wide* used memory exceeds `cap_bytes`.
+
+    Polls every `poll_seconds`; raises `TimeoutError` after
+    `max_wait_seconds`. Default policy in this project: pause when used
+    RAM exceeds 70 GiB on the 125 GiB lab server.
+    """
+    start = time.time()
+    while True:
+        used = psutil.virtual_memory().used
+        if used <= cap_bytes:
+            return
+        elapsed = time.time() - start
+        if on_wait is not None:
+            on_wait(used, elapsed)
+        if elapsed > max_wait_seconds:
+            raise TimeoutError(
+                f"system memory stayed above cap ({cap_bytes / 1024**3:.1f} GiB) "
+                f"for {max_wait_seconds:.0f}s (last seen {used / 1024**3:.1f} GiB)"
+            )
+        time.sleep(poll_seconds)
+
+
 # ---------- Peak memory tracking ------------------------------------------
 
 

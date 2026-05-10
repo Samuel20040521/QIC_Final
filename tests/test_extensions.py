@@ -104,6 +104,38 @@ def test_drifting_process_advances_t_per_query() -> None:
     assert drift.t == 2
 
 
+def test_coherent_drift_advances_t_and_changes_output() -> None:
+    """`CoherentDriftProcess` increments `t` per query and yields different
+    expectation values at successive `t`."""
+    from qpsq.oracle import CoherentDriftProcess, random_pauli_drift_hamiltonian
+
+    rng = np.random.default_rng(0)
+    n = 3
+    U0 = haar_unitary(n, rng)
+    H = random_pauli_drift_hamiltonian(n, n_terms=6, rng=rng)
+    proc = CoherentDriftProcess(U0, H, drift_rate=0.1)
+    obs = pauli_z_first(n)
+    state = random_stabilizer_product_state(n, rng).to_statevector()
+    e0 = proc.expectation(state, obs)
+    e1 = proc.expectation(state, obs)
+    assert proc.t == 2
+    assert abs(e0 - e1) > 1e-6
+    proc.reset()
+    assert proc.t == 0
+
+
+def test_random_pauli_drift_hamiltonian_is_hermitian_and_normalized() -> None:
+    from qpsq.oracle import random_pauli_drift_hamiltonian
+
+    rng = np.random.default_rng(0)
+    H = random_pauli_drift_hamiltonian(4, n_terms=10, rng=rng, spectral_norm=2.0)
+    # Hermitian
+    assert np.allclose(H, H.conj().T, atol=1e-9)
+    # Spectral norm matches request
+    s = float(np.linalg.norm(H, ord=2))
+    assert abs(s - 2.0) < 1e-9
+
+
 def test_drifting_process_outputs_change_with_t() -> None:
     rng = np.random.default_rng(0)
     n = 2
