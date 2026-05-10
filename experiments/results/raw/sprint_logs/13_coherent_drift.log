@@ -1,0 +1,17 @@
+
+=== 2026-05-11 00:34:13 ===
+[Parallel(n_jobs=6)]: Using backend LokyBackend with 6 concurrent workers.
+Resuming with 0 rows already logged.
+Pending trajectories: 24
+[Parallel(n_jobs=6)]: Done   6 tasks      | elapsed:    1.7s
+[Parallel(n_jobs=6)]: Done  18 out of  24 | elapsed:    3.6s remaining:    1.2s
+[Parallel(n_jobs=6)]: Done  24 out of  24 | elapsed:    4.4s finished
+wrote /mnt/sata/b11202015/QIC_Final/experiments/results/raw/13_coherent_drift.csv and /mnt/sata/b11202015/QIC_Final/report/figs/13_coherent_drift.pdf
+
+Mean MAE summary:
+  eta=0.0000: vanilla=0.0570, online_best=0.0553 (hl=2000), improvement=+3.0%
+  eta=0.0025: vanilla=0.1671, online_best=0.1372 (hl=500), improvement=+17.9%
+  eta=0.0050: vanilla=0.1872, online_best=0.1571 (hl=250), improvement=+16.1%
+  eta=0.0100: vanilla=0.1763, online_best=0.1701 (hl=2000), improvement=+3.5%
+  eta=0.0200: vanilla=0.2249, online_best=0.2172 (hl=250), improvement=+3.4%
+  eta=0.0400: vanilla=0.1945, online_best=0.1971 (hl=2000), improvement=-1.3%

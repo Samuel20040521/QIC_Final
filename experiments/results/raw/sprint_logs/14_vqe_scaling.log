@@ -1,0 +1,21 @@
+
+=== 2026-05-11 00:52:15 ===
+[Parallel(n_jobs=6)]: Using backend LokyBackend with 6 concurrent workers.
+Resuming with 0 rows.
+
+--- n = 6: building surrogate ---
+  scenario built in 5.5s; surrogate has 741 Pauli terms
+  pending 24 theta-grid points
+[Parallel(n_jobs=6)]: Done   6 tasks      | elapsed:    0.7s
+[Parallel(n_jobs=6)]: Done  18 out of  24 | elapsed:    0.8s remaining:    0.3s
+[Parallel(n_jobs=6)]: Done  24 out of  24 | elapsed:    0.9s finished
+[Parallel(n_jobs=6)]: Using backend LokyBackend with 6 concurrent workers.
+[Parallel(n_jobs=6)]: Done   6 tasks      | elapsed:    1.6s
+[Parallel(n_jobs=6)]: Done  18 out of  24 | elapsed:    5.3s remaining:    1.8s
+[Parallel(n_jobs=6)]: Done  24 out of  24 | elapsed:    6.2s finished
+
+--- n = 8: building surrogate ---
+  scenario built in 140.8s; surrogate has 7400 Pauli terms
+  pending 24 theta-grid points
+
+wrote /mnt/sata/b11202015/QIC_Final/experiments/results/raw/14_vqe_scaling.csv and /mnt/sata/b11202015/QIC_Final/report/figs/14_vqe_scaling.pdf
