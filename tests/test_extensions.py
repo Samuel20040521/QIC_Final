@@ -281,3 +281,118 @@ def test_circuit_noise_process_with_default_noise_changes_output() -> None:
     a = proc_noisy.expectation(state, obs)
     b = proc_clean.expectation(state, obs)
     assert b > 0.99 and a < b - 1e-2, (a, b)
+
+
+# --- CR-QPUF sign-parity defense (Remark 4 instantiation) --------------------
+
+
+def test_structured_bias_low_degree_fourier_mass_is_exactly_zero() -> None:
+    """Over the *full* stabilizer product ensemble (6^n states), the bias
+    `b(x) = A * prod_{i in M} sign_i(x)` has exactly zero Fourier mass on
+    every Pauli of weight < w, and mass `A / 3^w` on every Pauli that is
+    non-identity exactly on `M`."""
+    from itertools import product
+
+    from qpsq.crqpuf import compute_structured_bias
+    from qpsq.designs import (
+        StabilizerProductState,
+        pauli_expectation_on_stabilizer,
+    )
+
+    n = 4
+    mask = (0, 2, 3)  # w = 3
+    w = len(mask)
+    amplitude = 0.7
+
+    ensemble = [
+        StabilizerProductState(axes=axes, signs=signs)
+        for axes in product("XYZ", repeat=n)
+        for signs in product((1, -1), repeat=n)
+    ]
+    assert len(ensemble) == 6**n
+
+    def fourier_mass(label: str) -> float:
+        total = 0.0
+        for state in ensemble:
+            b = compute_structured_bias(state.signs, mask, amplitude)
+            total += b * pauli_expectation_on_stabilizer(label, state)
+        return total / len(ensemble)
+
+    # Every Pauli of weight <= w - 1: exactly zero mass.
+    for chars in product("IXYZ", repeat=n):
+        weight = sum(c != "I" for c in chars)
+        if weight > w - 1:
+            continue
+        label = "".join(reversed(chars))  # chars indexed by qubit -> Qiskit label
+        assert abs(fourier_mass(label)) < 1e-12, (label, fourier_mass(label))
+
+    # Weight-w Paulis supported exactly on M: mass A / 3^w, for any axes.
+    for on_mask_axes in (("X", "X", "X"), ("Z", "Y", "X")):
+        chars = ["I"] * n
+        for q, ax in zip(mask, on_mask_axes, strict=True):
+            chars[q] = ax
+        label = "".join(reversed(chars))
+        assert abs(fourier_mass(label) - amplitude / 3**w) < 1e-12, label
+
+
+def test_defended_attack_fails_below_parity_weight() -> None:
+    """At truncation degree k = 2 < w = 3, the defended device's responses
+    are unforgeable: attack success collapses versus the undefended device."""
+    from qpsq.crqpuf import (
+        AuthenticationProtocol,
+        CRQPUF,
+        attack_success_rate,
+        qpsq_attack,
+        random_challenge_set,
+    )
+    from qpsq.observables import pauli_z_first
+
+    rng = np.random.default_rng(7)
+    n = 4
+    mask = (0, 1, 3)  # w = 3
+    amplitude = 0.4
+    unitary = haar_unitary(n, rng)
+    challenges = random_challenge_set(n, 60, rng)
+
+    rates = {}
+    for defended in (False, True):
+        crpuf = CRQPUF(
+            process=UnitaryProcess(unitary),
+            observable=pauli_z_first(n),
+            n_qubits=n,
+            bias_mask=mask if defended else None,
+            bias_amplitude=amplitude if defended else 0.0,
+        )
+        protocol = AuthenticationProtocol(
+            crpuf=crpuf, accept_threshold=0.1, response_tau=0.02
+        )
+        attack = qpsq_attack(
+            crpuf=crpuf,
+            n_queries=4000,
+            eps=0.3,
+            tau=0.05,
+            rng=rng,
+            k_override=2,
+            eps_tilde_override=1e-12,
+        )
+        rates[defended] = attack_success_rate(crpuf, protocol, attack, challenges, rng)
+
+    assert rates[True] < rates[False] - 0.2, rates
+
+
+def test_defended_device_keeps_honest_completeness() -> None:
+    """The bias is deterministic per challenge, so it cancels between
+    enrollment and an honest re-query: completeness stays ~1."""
+    from qpsq.crqpuf import AuthenticationProtocol, CRQPUF, random_challenge_set
+
+    rng = np.random.default_rng(11)
+    n = 4
+    crpuf = CRQPUF.from_haar_unitary(n, rng, bias_mask=(0, 1, 2), bias_amplitude=0.4)
+    protocol = AuthenticationProtocol(crpuf=crpuf, accept_threshold=0.1, response_tau=0.02)
+    challenges = random_challenge_set(n, 50, rng)
+    enrolled = protocol.enroll(challenges, rng)
+    passes = sum(
+        protocol.verify(c, crpuf.respond(c, 0.02, rng), e)
+        for c, e in zip(challenges, enrolled, strict=True)
+    )
+    assert passes / len(challenges) >= 0.95

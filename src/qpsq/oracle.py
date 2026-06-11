@@ -104,10 +104,32 @@ def compose_with_per_qubit_kraus(
 
 
 class QPStat(ABC):
-    """`QPStat_E(rho, O, tau) -> alpha` with `|alpha - tr(O E(rho))| <= tau` w.h.p."""
+    """`QPStat_E(rho, O, tau) -> alpha` with `|alpha - tr(O E(rho))| <= tau` w.h.p.
+
+    The optional keyword-only `challenge` carries the classical identity of
+    the queried state (e.g. the `StabilizerProductState` that `state` was
+    built from). Unbiased oracles ignore it — Assumption 1 (Eq. 53) holds
+    for them regardless. A *biased* oracle (see `qpsq.crqpuf.BiasedQPStat`)
+    uses it to make its response depend on the challenge description.
+    """
 
     @abstractmethod
-    def query(self, state: Statevector, observable: SparsePauliOp, tau: float) -> float: ...
+    def query(
+        self,
+        state: Statevector,
+        observable: SparsePauliOp,
+        tau: float,
+        *,
+        challenge: object | None = None,
+    ) -> float: ...
+
+
+def gaussian_noise_z(delta: float) -> float:
+    """`z = Phi^{-1}(1 - delta/2)` so that `sigma = tau / z` keeps the
+    Gaussian deviation within `tau` with probability `1 - delta`."""
+    if not 0 < delta < 1:
+        raise ValueError("delta must lie in (0, 1)")
+    return float(norm.ppf(1.0 - delta / 2.0))
 
 
 @dataclass
@@ -124,11 +146,17 @@ class GaussianQPStat(QPStat):
     rng: np.random.Generator | None = None
 
     def __post_init__(self) -> None:
-        if not 0 < self.delta < 1:
-            raise ValueError("delta must lie in (0, 1)")
-        self._z = float(norm.ppf(1.0 - self.delta / 2.0))
+        self._z = gaussian_noise_z(self.delta)
 
-    def query(self, state: Statevector, observable: SparsePauliOp, tau: float) -> float:
+    def query(
+        self,
+        state: Statevector,
+        observable: SparsePauliOp,
+        tau: float,
+        *,
+        challenge: object | None = None,
+    ) -> float:
+        del challenge  # unbiased: response never depends on the challenge identity
         true_val = self.process.expectation(state, observable)
         sigma = tau / self._z
         rng = self.rng if self.rng is not None else np.random.default_rng()
@@ -143,11 +171,18 @@ class ShotQPStat(QPStat):
     shots: int = 1024
     rng: np.random.Generator | None = None
 
-    def query(self, state: Statevector, observable: SparsePauliOp, tau: float) -> float:
+    def query(
+        self,
+        state: Statevector,
+        observable: SparsePauliOp,
+        tau: float,
+        *,
+        challenge: object | None = None,
+    ) -> float:
         # The `tau` argument is informational here: the oracle's accuracy is
         # whatever the shot count gives us. Callers should set `shots` large
         # enough that the empirical deviation is below tau with high prob.
-        del tau
+        del tau, challenge
         rho = self.process.evolve_density(DensityMatrix(state))
         rng = self.rng if self.rng is not None else np.random.default_rng()
         accumulator = 0.0

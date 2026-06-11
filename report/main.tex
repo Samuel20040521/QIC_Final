@@ -114,10 +114,15 @@ This report goes beyond a paper summary in three ways:
         and~2 of the paper, then run three experiments that the paper
         does not (noisy-channel robustness, observable weight scaling,
         and circuit-class comparison; Section~\ref{sec:extensions}).
-  \item \textbf{End-to-end CR-QPUF demonstration.} We instantiate a
-        4-qubit CR-QPUF, build the authentication protocol, and run
-        Algorithm~1 as the adversary, measuring acceptance rate vs.\
-        adversary query budget (Section~\ref{sec:crqpuf}).
+  \item \textbf{End-to-end CR-QPUF demonstration and defense.} We
+        instantiate a 6-qubit CR-QPUF, build the authentication
+        protocol, and run Algorithm~1 as the adversary, measuring
+        acceptance rate vs.\ adversary query budget. We then
+        instantiate the biased-response defense left open by the
+        paper's Remark~4 --- a secret weight-$w$ sign-parity bias ---
+        and show it pins a degree-$k < w$ QPSQ adversary at the
+        random-guess floor while leaving honest authentication intact
+        (Section~\ref{sec:crqpuf}).
 \end{itemize}
 
 \paragraph{Roadmap.}
@@ -126,7 +131,8 @@ background. Section~\ref{sec:qpstat} formalises the QPStat oracle and
 restates Algorithm~1. Section~\ref{sec:reproduction} covers the
 reproduction of Figures~1--2. Section~\ref{sec:extensions} presents the
 three extension experiments. Section~\ref{sec:crqpuf} gives the
-CR-QPUF attack. Section~\ref{sec:lowerbound} sketches the
+CR-QPUF attack and our sign-parity defense.
+Section~\ref{sec:lowerbound} sketches the
 diamond-distance lower bounds. Section~\ref{sec:discussion} discusses
 limitations and open questions.
 
@@ -368,34 +374,68 @@ fall under the diamond-distance lower bound, yet are the easiest
 ensemble for Algorithm~1.
 
 %==============================================================================
-\section{End-to-End CR-QPUF Authentication Attack}\label{sec:crqpuf}
+\section{CR-QPUF Attack and a Provably QPSQ-Sound Defense}\label{sec:crqpuf}
 
-We instantiate a 4-qubit CR-QPUF as a fixed Haar-random unitary and
+We instantiate a 6-qubit CR-QPUF as a fixed Haar-random unitary and
 build the authentication protocol of \cite[\S 6.2]{wadhwa2024qpsq}: the
 verifier sends a stabilizer-product challenge state, and the prover
 returns $\tr(Z_0\,\E(\rho))$ measured to tolerance $0.02$. Verification
 accepts if the response is within $0.10$ of the enrolled value.
+Theorem~5's forgery guarantee rests on Assumption~1 (Eq.~53): the
+device's statistical-query responses are \emph{unbiased}. Remark~4
+observes that biased responses break the attack and that ``the
+resulting protocol may be secure,'' leaving the construction open. We
+instantiate one.
 
-We compare three strategies on $80$ test challenges across $6$ random
-QPUFs:
+\paragraph{The defense.}
+The device holds a secret qubit subset $M$, $|M| = w$, and adds to
+every response the deterministic bias
+$b(c) = A \prod_{i \in M} \mathrm{sign}_i(c)$, where
+$\mathrm{sign}_i(c) \in \{\pm 1\}$ is the challenge's stabilizer sign
+on qubit $i$. Over the uniform stabilizer-product ensemble, the
+Fourier coefficient $\hat b(P) = \mathbb{E}_c[b(c)\tr(P\rho_c)]$
+factorizes per qubit and is non-zero \emph{only} for Paulis
+non-identity on exactly $M$, where it equals $A/3^w$ (verified exactly
+over the full $6^n$-state ensemble in our test suite). Every Pauli of
+weight $<w$ carries zero bias mass, so a degree-$k$ truncated
+Algorithm~1 with $k < w$ converges to the \emph{unbiased} low-degree
+predictor: its forgeries are missing $b(c)$ and, since
+$A = 0.3$ exceeds the acceptance threshold, are rejected. Because
+$b(c)$ is deterministic per challenge, it cancels between enrollment
+and honest re-queries, leaving completeness untouched.
+
+We sweep the adversary's truncation degree $k \in \{2,3,4\}$ against a
+defended ($w = 4$) and undefended device, $80$ test challenges across
+$4$ random QPUFs:
 
 \begin{figure}[h]
   \centering
-  \includegraphics[width=0.6\linewidth]{figs/ext_crqpuf_attack.pdf}
-  \caption{The QPSQ adversary's acceptance rate climbs from $\sim
-  29\%$ at $N=200$ to $\sim 88\%$ at $N=4{,}000$, well above the
-  $\sim 12\%$ random-guess baseline and approaching the honest
-  prover's $100\%$. This is a small-scale empirical validation of the
-  paper's quasipolynomial attack.}
+  \includegraphics[width=\linewidth]{figs/ext_crqpuf_attack.pdf}
+  \caption{Left (defense off): the QPSQ adversary's acceptance rate
+  climbs with its query budget $N$ for every truncation degree $k$,
+  approaching the honest prover --- the paper's attack. Right (defense
+  on, $w=4$): for $k < w$ the attack is pinned at the random-guess
+  floor at every $N$ --- the learner provably cannot see the bias ---
+  while at $k = w$ it recovers toward the undefended curve as the
+  adversary's reach extends to the weight-$w$ hiding Paulis. Honest
+  completeness stays at $100\%$ in all defended cells.}
   \label{fig:crqpuf}
 \end{figure}
 
 \paragraph{Caveats.}
-This is a 4-qubit toy and does not formally break CR-QPUF security:
-the algorithm's complexity is quasipolynomial. Our demonstration
-confirms that for small $n$ the attack is operationally devastating;
-the open question, as the paper notes, is whether a polynomial-time
-QPSQ algorithm exists.
+The defense is \emph{conditional}: it defeats a degree-$\le k$ bounded
+QPSQ adversary only while $k < w$, and is vacuous once $k \ge w$ ---
+our $k = w$ curve exhibits the collapse explicitly. At small $n$ a
+quasipolynomial adversary affords $k \ge n$ and no hiding subspace
+exists; the defense is meaningful in the regime where $n$ (and thus
+$w$) outgrows the adversary's affordable degree. Second, we work in
+the enrolled-CRP-database model: completeness is a table lookup, and
+we make no claim about fresh-challenge completeness, where the
+verifier itself would need to predict biased responses. Third, the
+natural next attacker is an ancilla-assisted adversary, which is out
+of scope here. Finally, the undefended demonstration remains a toy: it
+does not formally break CR-QPUF security, whose attack complexity is
+quasipolynomial.
 
 %==============================================================================
 \section{Diamond-Distance Lower Bounds (Sketch)}\label{sec:lowerbound}
@@ -434,7 +474,11 @@ black-box learners.
 Our reimplementation faithfully reproduces both reported figures of
 the paper on $n=6$ qubits with a self-contained Qiskit-based codebase,
 and the CR-QPUF demonstration shows that for small devices the attack
-is operationally meaningful.
+is operationally meaningful. The sign-parity defense of
+Section~\ref{sec:crqpuf} turns the paper's Remark~4 into a concrete
+construction: against a degree-$k < w$ QPSQ adversary it pins forgery
+at the random-guess floor at every query budget we tested, at zero
+cost to honest authentication.
 
 \paragraph{What we noticed empirically.}
 \begin{itemize}[leftmargin=*]

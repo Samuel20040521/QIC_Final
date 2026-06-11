@@ -71,7 +71,9 @@ def gather(
     samples: list[GatheredSample] = []
     for _ in range(n_samples):
         s = random_stabilizer_product_state(n_qubits, rng)
-        y = oracle.query(s.to_statevector(), observable, tau)
+        # `challenge=s` routes the classical challenge identity to the oracle;
+        # unbiased oracles ignore it, a biased device keys its bias off it.
+        y = oracle.query(s.to_statevector(), observable, tau, challenge=s)
         samples.append(GatheredSample(state=s, y=y))
     return samples
 
@@ -195,14 +197,19 @@ def run_algorithm1(
     rng: np.random.Generator,
     eps_tilde_constant: float = 1.0,
     eps_tilde_override: float | None = None,
+    k_override: int | None = None,
 ) -> Algorithm1Result:
     """One-call convenience wrapper around gather -> learn.
 
     `eps_tilde_override` lets experiments calibrate the implicit constant in
     the paper's `Theta(eps^2 / (2n)^k)`. When `None`, we use
     `eps_tilde_constant * eps^2 / (2n)^k`.
+
+    `k_override` pins the truncation degree directly instead of deriving it
+    from `eps` via Eq. 42 — used by experiments that sweep `k` explicitly
+    (e.g. the degree-bounded CR-QPUF adversary).
     """
-    k = k_from_epsilon(eps)
+    k = k_override if k_override is not None else k_from_epsilon(eps)
     et = (
         eps_tilde_override
         if eps_tilde_override is not None
@@ -331,7 +338,7 @@ def gather_and_learn_streaming(
         n_chunk = min(chunk_size, n_total - processed)
         for _ in range(n_chunk):
             state = random_stabilizer_product_state(n_qubits, rng)
-            y = oracle.query(state.to_statevector(), observable, tau)
+            y = oracle.query(state.to_statevector(), observable, tau, challenge=state)
             axes = state.axes
             signs = state.signs
             for subset in range(1 << n_qubits):
