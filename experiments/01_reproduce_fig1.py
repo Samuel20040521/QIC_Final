@@ -13,6 +13,19 @@ stabilizer states. The paper reports that the shadow method tends to
 produce smaller deviations than the calibrated Gaussian, so the paper's
 emulator is a worst-case proxy.
 
+The shadow shot budget is NOT a free parameter: it is derived from the
+classical-shadow sample-complexity bound (Chebyshev) so that the shadow
+estimate satisfies the same `(tau, delta)` guarantee as the Gaussian
+oracle:
+
+    n_shots = ceil(3^w * (sum_P |c_P|)^2 / (delta * tau^2)) = 1649
+
+for the weight-1 observable `Z`. Because this bound is loose, the actual
+shadow deviations come out visibly narrower than the calibrated Gaussian
+— which is exactly the point of the paper's Figure 1. (Choosing an ad-hoc
+shot count breaks the comparison: e.g. 256 shots gives a shadow std of
+~0.108 ~= the Gaussian's sigma = 0.1, and the histograms overlap.)
+
 Outputs:
   experiments/results/fig1.csv     — per-trial deviations
   report/figs/fig1_reproduction.pdf — overlaid histograms
@@ -21,6 +34,7 @@ Outputs:
 from __future__ import annotations
 
 import csv
+import math
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -35,9 +49,13 @@ from _common import FIGS_DIR, RESULTS_DIR, make_rng, parse_seed_only
 
 TAU = 0.2
 DELTA = 0.0455
-N_TRIALS = 2000
-N_SHADOWS = 256  # finite-shot budget for shadow comparison
+N_TRIALS = 1000  # matches the paper's N = 1000
 N_QUBITS = 1
+# Weight of O and Pauli-1-norm of O (O = Z: weight 1, sum of |coeffs| = 1).
+OBS_WEIGHT = 1
+OBS_COEFF_L1 = 1.0
+# Shadow shot budget from the (tau, delta) guarantee — see module docstring.
+N_SHADOWS = math.ceil(3**OBS_WEIGHT * OBS_COEFF_L1**2 / (DELTA * TAU**2))
 
 
 def main() -> None:
@@ -86,30 +104,32 @@ def main() -> None:
         f"std = {shadow_devs_arr.std():.4f}"
     )
 
-    fig, ax = plt.subplots(figsize=(7, 4))
-    bins = np.linspace(-1.5 * TAU, 1.5 * TAU, 50)
-    ax.hist(
-        gauss_devs_arr,
-        bins=bins,
-        alpha=0.5,
-        label=f"GaussianQPStat (sigma calibrated for delta={DELTA})",
-        color="C0",
-    )
+    # Histogram style mirrors the paper's Figure 1: 35 bins over (-0.35, 0.35),
+    # classical shadow drawn first (narrow), normal-distribution oracle second.
+    fig, ax = plt.subplots(figsize=(6, 4.5))
+    bins = np.linspace(-0.35, 0.35, 36)
     ax.hist(
         shadow_devs_arr,
         bins=bins,
-        alpha=0.5,
-        label=f"Classical shadow ({N_SHADOWS} shots)",
+        alpha=0.75,
+        label="Classical Shadow",
+        color="C0",
+        edgecolor="black",
+        linewidth=0.4,
+    )
+    ax.hist(
+        gauss_devs_arr,
+        bins=bins,
+        alpha=0.75,
+        label="Normal Distr",
         color="C1",
+        edgecolor="black",
+        linewidth=0.4,
     )
-    ax.axvline(TAU, color="k", linestyle="--", linewidth=1, label=f"tau = {TAU}")
-    ax.axvline(-TAU, color="k", linestyle="--", linewidth=1)
-    ax.set_xlabel("deviation from true tr(O E(rho))")
-    ax.set_ylabel("count")
-    ax.set_title(
-        f"Fig. 1 reproduction (n=1 fixed Haar U, O=Z, {N_TRIALS} stab states)"
-    )
-    ax.legend(loc="upper right", fontsize=8)
+    ax.set_xlabel("error")
+    ax.set_ylabel("Count")
+    ax.set_title("Comparing deviations using two methods")
+    ax.legend(loc="upper right")
     fig.tight_layout()
     out = FIGS_DIR / "fig1_reproduction.pdf"
     fig.savefig(out)
