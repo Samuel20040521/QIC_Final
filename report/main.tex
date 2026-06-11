@@ -256,56 +256,82 @@ via \texttt{uv run python experiments/<script>.py --seed <s>}.
 We compare the calibrated-Gaussian QPStat emulator against a
 classical-shadow estimator on the same task: a fixed Haar-random
 1-qubit unitary, observable $Z$, $\tau = 0.2$, $\delta = 0.0455$,
-evaluated on $2{,}000$ random single-qubit stabilizer states.
+evaluated on $1{,}000$ random single-qubit stabilizer states. The
+shadow shot budget is not a free parameter: it is derived from the
+classical-shadow sample-complexity (Chebyshev) bound so that the
+shadow estimate carries the \emph{same} $(\tau, \delta)$ guarantee as
+the Gaussian oracle,
+$N_{\mathrm{shots}} = \lceil 3^{w}\,\|O\|_{\text{Pauli},1}^2 /
+(\delta\tau^2) \rceil = 1{,}649$ for the weight-$w{=}1$ observable $Z$.
 
 \begin{figure}[h]
   \centering
   \includegraphics[width=0.7\linewidth]{figs/fig1_reproduction.pdf}
-  \caption{Reproduction of paper Figure~1. Both methods stay within the
-  stated tolerance in $\sim 95\%$ of trials, matching $1-\delta$. The
-  Gaussian emulator is calibrated to saturate this bound while shadows
-  with $256$ shots achieve a comparable empirical standard deviation.}
+  \caption{Reproduction of paper Figure~1. The Gaussian emulator is
+  calibrated to saturate the $(\tau,\delta)$ bound ($95.2\%$ of trials
+  within $\tau$, vs.\ the $1-\delta = 95.45\%$ target; empirical std
+  $0.102 \approx \tau/2$). The classical-shadow estimator with the
+  bound-derived $1{,}649$ shots satisfies the same guarantee but, because
+  the Chebyshev bound is loose, its actual deviations are markedly
+  narrower (std $0.040$; $100\%$ within $\tau$).}
   \label{fig:fig1}
 \end{figure}
 
-The empirical fraction of trials with $|\text{deviation}| < \tau$ is
-$94.85\%$ for the Gaussian emulator and $94.40\%$ for shadows --- both
-within sampling error of the $1-\delta = 95.45\%$ target. The two
-methods produce qualitatively similar deviation distributions.
+This reproduces the paper's qualitative message: any practical
+estimation method meeting the $(\tau,\delta)$ specification deviates
+\emph{less} than the calibrated Gaussian, so the Gaussian emulator is a
+worst-case proxy and simulated performance lower-bounds real-life
+performance. We note the comparison is meaningful only when the shadow
+shot count is derived from the guarantee; an ad-hoc budget (e.g.\ $256$
+shots, giving std $\sqrt{3/256} \approx 0.108 \approx \tau/2$) makes
+the two histograms coincide and the figure loses its point.
 
 \subsection{Figure~2: Algorithm~1 on Haar 6-qubit unitaries}
 
 \begin{figure}[h]
   \centering
   \includegraphics[width=\linewidth]{figs/fig2_reproduction.pdf}
-  \caption{Reproduction of paper Figure~2. Mean absolute prediction
-  error vs. number of QPSQ queries $N$ for Algorithm~1 on $10$
-  Haar-random 6-qubit unitaries with observable $O = Z_0$, target
-  prediction error $\epsilon = 0.3$, and three QPStat tolerances. Three
-  panels correspond to three target-state distributions.
-  Lower $\tau$ and larger $N$ both reduce error, matching the paper's
-  qualitative trends.}
+  \caption{Reproduction of paper Figure~2. Mean squared prediction
+  error vs.\ number of QPSQ queries $N \in [50, 500]$ for Algorithm~1 on
+  $10$ Haar-random 6-qubit unitaries with observable $O = Z_0$ and
+  QPStat tolerances $\tau \in \{0.05, 0.15, 0.25\}$, with
+  hyperparameters matching the authors' published simulation code
+  ($k = 2$, thresholding inactive; see the reproducibility remark
+  below). Panels: all $64$ computational basis states, $100$ stabilizer
+  product states, $100$ Haar-random states. Lower $\tau$ and larger $N$
+  reduce error; the Haar-random panel is lowest and flattest, as in the
+  paper.}
   \label{fig:fig2}
 \end{figure}
 
-Numerical highlights from \texttt{experiments/results/fig2.csv}:
-on the stabilizer-product distribution at $\tau=0.05$, MAE drops from
-$0.16$ at $N=1{,}000$ to $0.064$ at $N=8{,}000$. The variance across
-the $10$ unitaries is small (typical std $0.005$--$0.02$), confirming
-the algorithm's stability.
+Numerical highlights from \texttt{experiments/results/fig2.csv}: at
+$\tau=0.05$ the MSE drops from $0.074$ ($N{=}50$) to $0.016$
+($N{=}500$) on computational basis states, $0.058$ to $0.015$ on
+stabilizer product states, and $0.022$ to $0.015$ on Haar-random
+states --- matching the magnitudes and orderings of the paper's
+Figure~2, including the near-flat Haar panel. (The Haar-random target
+values $\operatorname{tr}(Z_0 U \rho U^\dagger)$ concentrate around $0$
+with variance $\approx 1/(2^n+1) \approx 0.015$, which is exactly the
+plateau all panels converge to.) The per-unitary spread is small
+(std $\approx 0.003$ at $N=500$).
 
-\paragraph{Discrepancies with the paper.}
-The paper reports the algorithm performs \emph{best} on Haar-random
-test states (the only distribution within the formal locally-flat
-guarantee). Our numbers show Haar test states yield slightly
-\emph{higher} MAE than stabilizer or computational-basis tests at the
-budgets we explore. We attribute this to (i) finite-$N$ noise
-amplification at large $|P|$ (the paper's $\tilde\epsilon$ formula has
-implicit constants we set to $1$; tightening them reduces variance at
-a small bias cost) and (ii) the smaller dynamic range of true
-expectation values on Haar states (concentrated near $0$), which
-shrinks the relative-but-not-absolute advantage. Both effects vanish at
-larger $N$.
+\paragraph{A reproducibility gap.} The paper's Equation~(42) sets
+$k = \lceil \log_{1.5}(2/\epsilon^2) \rceil$, but the authors' published
+simulation code (\texttt{qpsq-learning}, \texttt{coeff.py}) implements
+$k = \lceil \log_{1.5}(2/\epsilon) \rceil$ with $\epsilon = 0.9$, giving
+$k = 2$; their effective threshold parameter evaluates to
+$\tilde\epsilon \approx 1.5\times 10^{-11}$, i.e.\ the two-part
+threshold of Algorithm~1 is inactive in the published figure. The
+distinction matters: an innocuous-looking choice such as
+$\epsilon = 0.3$ under Equation~(42) yields $k = 8 \ge n$, removing the
+degree truncation entirely. Every Pauli coefficient up to weight $n$ is
+then estimated with its $3^{|P|}$ variance amplification, the MSE
+inflates by $1$--$2$ orders of magnitude, and the Haar-random panel
+inverts from best to \emph{worst} (Haar test states overlap all
+$\sim 4^n$ noisy Pauli channels, whereas computational basis states
+touch only the $2^n$ diagonal ones). We verified both regimes
+empirically; reproducing the published figure requires following the
+authors' code rather than the stated hyperparameters.
 
 %==============================================================================
 \section{Extension Experiments}\label{sec:extensions}
