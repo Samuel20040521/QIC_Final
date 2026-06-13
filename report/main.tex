@@ -463,6 +463,61 @@ of scope here. Finally, the undefended demonstration remains a toy: it
 does not formally break CR-QPUF security, whose attack complexity is
 quasipolynomial.
 
+\subsection{Security scope and the pair-access constraint}
+\label{sec:pair-access}
+
+The unforgeability established above holds strictly within the
+quantum-statistical-query threat model, and only against a degree-bounded
+adversary. Concretely, the guarantee is conditional on $k < w$: a learner
+restricted to QPSQ access at truncation degree $k$ observes only the
+expectation functionals $\hat b(P)$ for $|P| \le k$, all of which vanish by
+construction below the mask weight $w$. This condition does not survive a
+change of oracle. If the protocol exposes the adversary to raw, individual
+challenge--response pairs (CRPs) --- single estimated responses
+$r(c) \approx \tr(Z_0\,\E(\rho_c)) + b(c)$, rather than ensemble-averaged
+statistics --- then the learner is no longer confined to the statistical-query
+framework, and the hiding argument no longer applies.
+
+A non-SQ adversary with pair access can recover the secret mask in polynomial
+time. It first estimates the unbiased low-degree component of the channel at
+$k = 2$, which lies entirely within the QPSQ-learnable subspace and costs only
+$\mathrm{poly}(n)$ queries; call the resulting degree-$2$ predictor $h(c)$. For
+each challenge it then forms the residual
+\[
+  r(c) - h(c) \;\approx\; b(c) + \text{noise}
+            \;=\; A\,\chi_M(\mathrm{signs}(c)) + \text{noise},
+\]
+where $\chi_M(\mathrm{signs}(c)) = \prod_{i\in M}\mathrm{sign}_i(c) \in \{\pm 1\}$
+is the parity carried by the bias. Under the simulation parameters the
+estimation noise scale is $\sigma \approx 0.025$, comfortably below the bias
+amplitude $A = 0.3$, so the sign of each residual reveals the parity bit
+$\chi_M(\mathrm{signs}(c))$ exactly with overwhelming probability. Each
+challenge thus yields one linear constraint $\sum_{i\in M}s_i(c) = \beta(c)
+\pmod 2$ on the unknown indicator vector of $M$ over $\mathrm{GF}(2)$, where
+$s_i(c)\in\{0,1\}$ encodes $\mathrm{sign}_i(c)$ and $\beta(c)$ is the extracted
+parity bit. Collecting $O(n)$ such constraints and applying Gaussian
+elimination over $\mathrm{GF}(2)$ recovers the mask $M$ exactly in polynomial
+time. This is precisely the textbook separation between the statistical-query
+and PAC models for parity learning~\cite{kearns1993,valiant1984pac}: parities
+are inapproximable from a polynomial number of bounded-tolerance statistical
+queries, yet trivially learnable from labelled examples by linear algebra ---
+and the deterministic, low-noise bias presents the adversary with exactly such
+examples.
+
+The scope of this subsection is therefore deliberately narrow, and we frame it
+as a direct empirical evaluation of Wadhwa--Doosti's Remark~4. The sign-parity
+construction substantiates the remark's conjecture that biased responses can
+defeat the QPSQ forgery attack, but only as \emph{conditional} unforgeability
+restricted to the bounded-degree QPSQ adversary; it does not constitute a
+defence against an adversary granted raw CRP access. Closing that gap requires
+moving the bias from a deterministic, near-noiseless signal to a regime where
+recovering $M$ from the leaked pairs is itself computationally hard --- that is,
+choosing the noise scale so that the residual extraction reduces to Learning
+Parities with Noise (LPN) rather than to noiseless Gaussian elimination. The
+present defence is sound exactly to the boundary of the statistical-query model
+and no further, consistent with the prior classical-learnability results on
+CR-QPUFs~\cite{pirnay2022crqpuf}.
+
 %==============================================================================
 \section{Diamond-Distance Lower Bounds (Sketch)}\label{sec:lowerbound}
 
@@ -492,6 +547,196 @@ Theorem~2's exponential lower bound, yet are learnable in polynomial
 time in the standard black-box setting~\cite{webb2016cliffordtdesign}.
 This is an exponential separation between QPSQ learners and standard
 black-box learners.
+
+\subsection{Robustness of the Haar wall to ancilla-assisted QPSQs}
+\label{sec:ancilla-wall}
+
+The doubly-exponential bound of Wadhwa--Doosti's Theorem~4 is stated for
+the ancilla-free oracle ($m=0$). A natural worry --- raised as open
+question~(iii) above --- is that ancilla-assisted statistical queries
+might collapse it. We make the dependence on the ancilla count explicit.
+Fix the parametrized oracle
+\[
+  QPStat^{(m)}_U(\rho_{\mathrm{in}}, O_{n+m}, \tau),
+  \qquad
+  \rho_{\mathrm{in}} \in \mathcal{S}_{2^{n+m}},
+  \quad \|O_{n+m}\|_\infty \le 1,
+\]
+returning a $\tau$-accurate estimate of
+$\tr\!\big(O_{n+m}\,(U\otimes I_m)\,\rho_{\mathrm{in}}\,(U^\dagger\otimes I_m)\big)$
+for an unknown $U \in \mathcal{U}_{2^n}$. The base case $m=0$ recovers the
+paper's oracle, and the edge case $m=n$ grants full Choi-state access,
+reducing process learning to state QSQ on $J(U)$ and collapsing the wall
+to the polynomial/exponential regime of \cite{angrisani2023learningunitaries}.
+The question is what happens in between.
+
+\begin{lemma}[Ancilla Lipschitz scaling]\label{lem:ancilla-lipschitz}
+Let $\rho_{\mathrm{in}} \in \mathcal{S}_{2^{n+m}}$ be a joint state and
+$O_{n+m}$ an observable on $n+m$ qubits with $\|O_{n+m}\|_\infty \le 1$.
+The function
+\[
+  f_{\rho,O}(U) \;=\;
+  \tr\!\big(O_{n+m}\,(U\otimes I_m)\,\rho_{\mathrm{in}}\,(U^\dagger\otimes I_m)\big),
+  \qquad U \in \mathcal{M}_{2^n,2^n},
+\]
+is Lipschitz with respect to the Schatten-$2$ (Hilbert--Schmidt) norm with
+constant $L \le 2\cdot 2^{m/2}$.
+\end{lemma}
+
+\begin{proof}
+Write $W = U\otimes I_m$ and $W' = V\otimes I_m$ for $U,V \in \mathcal{U}_{2^n}$,
+and abbreviate $\rho = \rho_{\mathrm{in}}$, $O = O_{n+m}$. Telescoping the
+conjugation,
+\[
+  W\rho W^\dagger - W'\rho W'^\dagger
+  \;=\;
+  (W-W')\,\rho\,W^\dagger \;+\; W'\,\rho\,(W-W')^\dagger ,
+\]
+so by linearity of the trace and the triangle inequality
+\[
+  |f_{\rho,O}(U) - f_{\rho,O}(V)|
+  \;\le\;
+  \big|\tr\!\big(O\,(W-W')\,\rho\,W^\dagger\big)\big|
+  \;+\;
+  \big|\tr\!\big(O\,W'\,\rho\,(W-W')^\dagger\big)\big| .
+\]
+Apply H\"older's inequality $|\tr(OX)| \le \|O\|_\infty\,\|X\|_1$ with
+$\|O\|_\infty \le 1$, followed by the Schatten product inequality
+$\|AB\|_1 \le \|A\|_2\,\|B\|_2$. For the first term,
+\[
+  \big|\tr\!\big(O\,(W-W')\,\rho\,W^\dagger\big)\big|
+  \;\le\;
+  \|(W-W')\,\rho\,W^\dagger\|_1
+  \;\le\;
+  \|W-W'\|_2 \, \|\rho\,W^\dagger\|_2
+  \;\le\;
+  \|W-W'\|_2 ,
+\]
+where we used $\|\rho\,W^\dagger\|_2 \le \|\rho\|_2\,\|W^\dagger\|_\infty
+\le \|\rho\|_1 = 1$ (a density operator has $\|\rho\|_2 \le \|\rho\|_1 = 1$
+and $W^\dagger$ is unitary). The second term is bounded identically by
+$\|W'\rho\|_2\,\|W-W'\|_2 \le \|W-W'\|_2$. Hence
+\[
+  |f_{\rho,O}(U) - f_{\rho,O}(V)| \;\le\; 2\,\|W-W'\|_2 .
+\]
+Finally the Hilbert--Schmidt norm is multiplicative over tensor products,
+\[
+  \|W-W'\|_2 = \|(U-V)\otimes I_m\|_2
+            = \|U-V\|_2 \, \|I_m\|_2
+            = 2^{m/2}\,\|U-V\|_2 ,
+\]
+so $|f_{\rho,O}(U)-f_{\rho,O}(V)| \le 2\cdot 2^{m/2}\,\|U-V\|_2$ and
+$L \le 2\cdot 2^{m/2}$. Setting $m=0$ recovers the constant $L \le 2$ used
+in the paper's $m=0$ analysis.
+\end{proof}
+
+The ancillas enlarge the Lipschitz constant by $\|I_m\|_2 = 2^{m/2}$ but do
+\emph{not} change the dimension of the manifold on which $U$ is drawn:
+concentration is taken over $U \sim \mu_H$ on $\mathcal{U}_{2^n}$, so the
+ambient dimension in Meckes' bound stays $N = 2^n$. This is the crux of the
+following theorem.
+
+\begin{theorem}[Robustness of the Haar wall under $m$-ancilla QPSQs]
+\label{thm:haar-wall}
+Let $U \sim \mu_H$ on $\mathcal{U}_{2^n}$ and fix $\rho_{\mathrm{in}}$, $O_{n+m}$
+as above. Then for any $\tau > 0$,
+\[
+  \Pr_{U \sim \mu_H}\!\Big(
+    \big|\,f_{\rho,O}(U) - \mathbb{E}_{U\sim\mu_H} f_{\rho,O}(U)\,\big| > \tau
+  \Big)
+  \;\le\;
+  2\exp\!\Big(-\tfrac{2^{n-m}\,\tau^2}{48}\Big)
+  \;=\;
+  2\exp\!\big(-\Theta(2^{n-m}\tau^2)\big).
+\]
+Consequently, any learner that uses $q$ queries of tolerance $\tau$ to
+$QPStat^{(m)}_U$ and outputs a channel $\tau$-close in diamond distance to
+$U$ on a $\beta$-fraction of Haar inputs with internal success $\alpha$ must
+satisfy
+\[
+  q + 1 \;\ge\;
+  \frac{(2\alpha-1)\beta}{2}\,
+  \exp\!\Big(\tfrac{2^{n-m}\tau^2}{48}\Big).
+\]
+\end{theorem}
+
+\begin{proof}
+By Lemma~\ref{lem:ancilla-lipschitz}, $f_{\rho,O}$ is $L$-Lipschitz in the
+Schatten-$2$ norm with $L^2 \le 4\cdot 2^m$. Meckes' concentration
+inequality for the Haar measure on $\mathcal{U}_{N}$ with $N = 2^n$
+(the paper's Lemma~9, Corollary~17 of the cited Meckes bound) gives, for the
+one-sided deviation,
+\[
+  \Pr_{U\sim\mu_H}\!\big(f_{\rho,O}(U) - \mathbb{E}f_{\rho,O}(U) > \tau\big)
+  \;\le\;
+  \exp\!\Big(-\frac{N\tau^2}{12 L^2}\Big)
+  \;\le\;
+  \exp\!\Big(-\frac{2^n\,\tau^2}{12 \cdot 4 \cdot 2^m}\Big)
+  \;=\;
+  \exp\!\Big(-\frac{2^{n-m}\tau^2}{48}\Big).
+\]
+A union bound over both tails yields the stated two-sided factor of $2$.
+For the query bound, the Haar twirl of $U\otimes I_m$ sends
+$\mathbb{E}_{U\sim\mu_H}f_{\rho,O}(U)
+= \tr\!\big(O\,(\Phi_{\mathrm{dep}}\otimes I_m)(\rho_{\mathrm{in}})\big)$,
+i.e. the mean response is the partially-depolarised value. The deviation
+event above is therefore exactly the event distinguishing $U$ from the
+depolarising reference channel by more than $\tau$, so the maximal
+distinguishing probability in the denominator of the paper's Lemma~6 is at
+most $2\exp(-2^{n-m}\tau^2/48)$. Substituting,
+\[
+  q + 1
+  \;\ge\;
+  \frac{(2\alpha-1)\beta}
+       {\displaystyle \max_{\rho,O}\Pr_{U\sim\mu_H}
+        \big[\,|\tr(O\,U(\rho)) - \tr(O\,\Phi_{\mathrm{dep}}(\rho))| > \tau\,\big]}
+  \;\ge\;
+  \frac{(2\alpha-1)\beta}{2}\,
+  \exp\!\Big(\tfrac{2^{n-m}\tau^2}{48}\Big).
+\]
+At $m = 0$ this is precisely the doubly-exponential bound of the paper's
+Theorem~4; at $m = n$ the exponent collapses to the constant $\tau^2/48$,
+consistent with the Choi-state reduction of
+\cite{angrisani2023learningunitaries}.
+\end{proof}
+
+\begin{corollary}[Critical ancilla budget]\label{cor:threshold}
+Write $q = \mathrm{poly}(n)$, i.e. $q = n^{\Theta(1)}$. The query lower bound
+of Theorem~\ref{thm:haar-wall} drops to polynomial in $n$ only once the
+ancilla count reaches
+\[
+  m^\ast \;=\; n - \Theta\!\big(\log(1/\tau) + \log\log n\big).
+\]
+In particular, for any sublinear ancilla allocation $m = o(n)$ the bound
+remains super-polynomial in $n$.
+\end{corollary}
+
+\begin{proof}
+Taking logarithms of the bound $q + 1 \ge \tfrac{(2\alpha-1)\beta}{2}
+\exp(2^{n-m}\tau^2/48)$,
+\[
+  \log(q+1) \;\ge\; \frac{2^{n-m}\tau^2}{48} + O(1).
+\]
+The bound permits $q = \mathrm{poly}(n)$, i.e. $\log q = \Theta(\log n)$,
+exactly when the exponent is $\Theta(\log n)$:
+\[
+  \frac{2^{n-m}\tau^2}{48} = \Theta(\log n)
+  \;\Longleftrightarrow\;
+  2^{\,n-m} = \Theta\!\Big(\frac{\log n}{\tau^2}\Big)
+  \;\Longleftrightarrow\;
+  n - m = \log_2\Theta\!\Big(\frac{\log n}{\tau^2}\Big)
+        = \Theta\!\big(\log\log n + \log(1/\tau)\big),
+\]
+using $\log_2(1/\tau^2) = 2\log_2(1/\tau) = \Theta(\log(1/\tau))$. Solving for
+$m$ gives $m^\ast = n - \Theta(\log(1/\tau) + \log\log n)$. For
+$m = o(n)$ we have $n - m = (1-o(1))n = \Theta(n)$, which dominates
+$\Theta(\log(1/\tau)+\log\log n)$ for all large $n$; hence $2^{n-m}$ grows
+super-polynomially and $q$ inherits a super-polynomial lower bound. Breaking
+the wall therefore requires an ancilla register within an additive
+$O(\log(1/\tau) + \log\log n)$ of the full system size $n$ --- a near-complete
+Choi-state purification --- rather than any sublinear amount of ancillary
+workspace.
+\end{proof}
 
 %==============================================================================
 \section{Discussion and Open Questions}\label{sec:discussion}
